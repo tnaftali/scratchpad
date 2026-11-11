@@ -2,7 +2,7 @@
   <img src="docs/icon-512.png" width="96" alt="scratchpad icon">
 </p>
 
-<h1 align="center">scratchpad</h1>
+<h1 align="center">Scratchpad</h1>
 
 <p align="center">
   A floating markdown scratchpad for Linux, in the style of Raycast Notes.<br>
