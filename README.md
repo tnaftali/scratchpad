@@ -1,6 +1,13 @@
-# scratchpad
+<p align="center">
+  <img src="docs/icon-512.png" width="96" alt="scratchpad icon">
+</p>
 
-A floating markdown scratchpad for Linux, in the style of Raycast Notes. Native [GPUI](https://www.gpui.rs/) app, one file, no accounts, no sync.
+<h1 align="center">scratchpad</h1>
+
+<p align="center">
+  A floating markdown scratchpad for Linux, in the style of Raycast Notes.<br>
+  Native <a href="https://www.gpui.rs/">GPUI</a> app, one file, no accounts, no sync.
+</p>
 
 ![scratchpad](docs/screenshot.png)
 
