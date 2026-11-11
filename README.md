@@ -9,7 +9,7 @@ Hit a hotkey, jot something down, hit it again. The window closes and the text i
 ## What it does
 
 - **One note, always saved.** Every change is written to `~/Documents/scratchpad.md` as you type. Open it in any editor.
-- **Live markdown styling.** Headings, `~~strikethrough~~`, `` `code` `` and links are styled while you write. Markers (`#`, `~~`, backticks) are dimmed on every line except the one with the caret, so raw markdown shows only where you are editing.
+- **Live markdown styling.** Headings, **bold**, *italic*, `~~strikethrough~~`, `` `code` `` and links are styled while you write. Markers (`#`, `~~`, backticks) are dimmed on every line except the one with the caret, so raw markdown shows only where you are editing.
 - **Lists that behave.** Typing `- ` turns into a `•` bullet. Enter continues the list (bullets and `1.` numbering), and Enter on an empty item ends it. Tab and Shift+Tab indent and outdent a bullet. Bullet and number markers are tinted with the accent color.
 - **Copy on select.** Selected text goes to both Wayland clipboards (regular and primary), so it pastes in terminals with Shift+Insert. It stays available after the app closes.
 - **Remembers its place.** Window size and position are saved and restored (Hyprland, via `hyprctl`).
@@ -21,7 +21,7 @@ Hit a hotkey, jot something down, hit it again. The window closes and the text i
 cargo build --release
 ```
 
-Needs a Wayland session with `wl-copy` (from `wl-clipboard`) for copy on select. Window position tracking needs Hyprland. The font is set by `FONT` in `src/main.rs` and must be installed.
+Needs a Wayland session with `wl-copy` (from `wl-clipboard`) for copy on select. Window position tracking needs Hyprland. The font is set by `FONT` in `src/main.rs` and must be installed. Use a font with static Bold and Italic files (on Arch, `ttf-ibm-plex`): GPUI does not apply variable-font axes, so a variable font shows no bold or italic.
 
 ## Run
 
