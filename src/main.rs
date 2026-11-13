@@ -1,6 +1,6 @@
 //! Scratchpad: floating plain-text scratchpad over one file, remembers its place.
 
-use std::{fs, path::PathBuf, process::Command, thread, time::Duration};
+use std::{fs, ops::Range, path::PathBuf, process::Command, thread, time::Duration};
 
 use gpui::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, FontStyle, FontWeight,
@@ -8,6 +8,7 @@ use gpui::{
     MouseUpEvent, ParentElement, Render, StrikethroughStyle, Styled, UnderlineStyle, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions, div, px, rgb, size,
 };
+use gpui_base::actions::{SelectDown, SelectUp};
 use gpui_component::{
     Sizable, Size, Theme, ThemeMode,
     input::{
@@ -373,10 +374,22 @@ impl Scratchpad {
 
 impl Scratchpad {
     /// Tab / Shift+Tab on a "• " line moves the whole item one level. Other lines keep the default.
+    /// With a selection, every line it touches moves one level.
     fn indent_bullet(&mut self, outdent: bool, window: &mut Window, cx: &mut Context<Self>) {
         const STEP: &str = "    ";
         let state = self.editor.read(cx);
         let value = state.value().to_string();
+        let selection = state.selected_range();
+        if !selection.is_empty() {
+            let (block, indented) = shift_lines(&value, selection, outdent);
+            self.editor.update(cx, |e, cx| {
+                e.set_selected_range(block.clone(), cx);
+                e.replace(&indented, window, cx);
+                e.set_selected_range(block.start..block.start + indented.len(), cx);
+            });
+            cx.stop_propagation();
+            return;
+        }
         let caret = state.cursor();
         let start: usize = value
             .split_inclusive('\n')
@@ -406,6 +419,33 @@ impl Scratchpad {
             .update(cx, |e, cx| e.set_selected_range(new_caret..new_caret, cx));
         cx.stop_propagation();
     }
+}
+
+/// Whole-line block covering `selection` (a selection that ends at a line start skips that line),
+/// and that block with one indent level added to or removed from each non-empty line.
+fn shift_lines(value: &str, selection: Range<usize>, outdent: bool) -> (Range<usize>, String) {
+    const STEP: &str = "    ";
+    let start = value[..selection.start].rfind('\n').map_or(0, |i| i + 1);
+    let mut end = selection.end;
+    if end > selection.start && value[..end].ends_with('\n') {
+        end -= 1;
+    }
+    let end = value[end..].find('\n').map_or(value.len(), |i| end + i);
+    let shifted = value[start..end]
+        .split('\n')
+        .map(|line| {
+            if outdent {
+                let n = (line.len() - line.trim_start_matches(' ').len()).min(STEP.len());
+                line[n..].to_string()
+            } else if line.is_empty() {
+                String::new()
+            } else {
+                format!("{STEP}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (start..end, shifted)
 }
 
 impl Focusable for Scratchpad {
@@ -504,6 +544,8 @@ fn main() {
             KeyBinding::new("alt-delete", DeleteToNextWordEnd, Some("Input")),
             KeyBinding::new("alt-home", MoveToStart, Some("Input")),
             KeyBinding::new("alt-end", MoveToEnd, Some("Input")),
+            KeyBinding::new("alt-shift-up", SelectUp, Some("Input")),
+            KeyBinding::new("alt-shift-down", SelectDown, Some("Input")),
             KeyBinding::new("alt-a", SelectAll, Some("Input")),
             KeyBinding::new("alt-z", Undo, Some("Input")),
             KeyBinding::new("alt-shift-z", Redo, Some("Input")),
@@ -558,6 +600,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shift_lines_whole_block() {
+        let v = "a\n  b\n\nc";
+        let (r, out) = shift_lines(v, 1..5, false);
+        assert_eq!((r, out.as_str()), (0..v.len() - 3, "    a\n      b"));
+        // selection ending at a line start leaves that line alone
+        let (r, _) = shift_lines(v, 0..2, false);
+        assert_eq!(r, 0..1);
+        assert_eq!(shift_lines("      x\n y", 0..10, true).1, "  x\ny");
+    }
 
     #[test]
     fn heading_marker_dims_off_caret_line() {
