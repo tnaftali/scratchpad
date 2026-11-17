@@ -1,29 +1,25 @@
 //! Scratchpad: floating plain-text scratchpad over one file, remembers its place.
 
-use std::{fs, ops::Range, path::PathBuf, process::Command, thread, time::Duration};
+use std::{fs, ops::Range, path::PathBuf};
 
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton,
-    MouseUpEvent, ParentElement, Render, StrikethroughStyle, Styled, UnderlineStyle, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowOptions, div, px, rgb, size,
+    App, AppContext, ClipboardItem, Context, Entity, FocusHandle, Focusable, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
+    ParentElement, Render, StrikethroughStyle, Styled, UnderlineStyle, Window, div, px, rgb, size,
 };
-use gpui_base::actions::{SelectDown, SelectUp};
 use gpui_component::{
     Sizable, Size, Theme, ThemeMode,
     input::{
-        Copy, Cut, DeleteToBeginningOfLine, DeleteToNextWordEnd, DeleteToPreviousWordStart, Editor,
-        EditorState, Enter, IndentInline, InputEvent, MoveToEnd, MoveToNextWord,
-        MoveToPreviousWord, MoveToStart, OutdentInline, Paste, Redo, RopeExt, SelectAll,
-        SelectToNextWordEnd, SelectToPreviousWordStart, TextDecoration, TextDecorationCollection,
-        Undo,
+        Copy, Cut, DeleteToBeginningOfLine, Editor, EditorState, Enter, IndentInline, InputEvent,
+        OutdentInline, RopeExt, TextDecoration, TextDecorationCollection,
     },
 };
 use serde::{Deserialize, Serialize};
 
-const APP_ID: &str = "scratchpad";
-/// Window background alpha. The text stays opaque.
-const OPACITY: f32 = 0.5;
+#[cfg_attr(target_os = "linux", path = "linux.rs")]
+#[cfg_attr(target_os = "macos", path = "macos.rs")]
+mod platform;
+
 /// Proportional UI sans; size adjusted by eye.
 const FONT: &str = "IBM Plex Sans";
 /// Claude black.
@@ -56,91 +52,31 @@ fn load_geometry() -> Option<Geometry> {
     serde_json::from_slice(&fs::read(geometry_path()).ok()?).ok()
 }
 
-fn hyprctl(args: &[&str]) -> Option<Vec<u8>> {
-    let out = Command::new("hyprctl").args(args).output().ok()?;
-    out.status.success().then_some(out.stdout)
+fn save_geometry(g: &Geometry) {
+    let path = geometry_path();
+    let _ = fs::create_dir_all(path.parent().expect("has parent"));
+    let _ = fs::write(path, serde_json::to_vec(g).expect("serializes"));
 }
 
-/// This window as Hyprland sees it. Wayland clients cannot read or set their own position.
-fn current_geometry() -> Option<Geometry> {
-    let clients: Vec<serde_json::Value> =
-        serde_json::from_slice(&hyprctl(&["clients", "-j"])?).ok()?;
-    let c = clients.iter().find(|c| c["class"] == APP_ID)?;
-    Some(Geometry {
-        x: c["at"][0].as_i64()?,
-        y: c["at"][1].as_i64()?,
-        w: c["size"][0].as_i64()?,
-        h: c["size"][1].as_i64()?,
-    })
+/// Swap the list marker at the start of each line: "- " in the file, "• " in the editor.
+fn swap_bullets(text: &str, from: &str, to: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|l| {
+            let body = l.trim_start();
+            match body.strip_prefix(from) {
+                Some(rest) => format!("{}{to}{rest}", &l[..l.len() - body.len()]),
+                None => l.to_string(),
+            }
+        })
+        .collect()
 }
 
-/// Restore the saved place once the window is mapped, then keep saving it.
-fn track_geometry(saved: Option<Geometry>) {
-    thread::spawn(move || {
-        let mut restored = saved.is_none();
-        let mut last = None::<(i64, i64, i64, i64)>;
-        loop {
-            thread::sleep(Duration::from_millis(if restored { 300 } else { 50 }));
-            let Some(g) = current_geometry() else {
-                continue;
-            };
-            if let (false, Some(s)) = (restored, saved) {
-                // Resize keeps the window center, so resize first, then move. Hyprland may
-                // still be applying window rules, so repeat until the place sticks.
-                let sel = format!("window = \"class:{APP_ID}\"");
-                for _ in 0..20 {
-                    hyprctl(&[
-                        "dispatch",
-                        &format!(
-                            "hl.dsp.window.resize({{ x = {}, y = {}, exact = true, {sel} }})",
-                            s.w, s.h
-                        ),
-                    ]);
-                    hyprctl(&[
-                        "dispatch",
-                        &format!(
-                            "hl.dsp.window.move({{ x = {}, y = {}, exact = true, {sel} }})",
-                            s.x, s.y
-                        ),
-                    ]);
-                    thread::sleep(Duration::from_millis(150));
-                    if current_geometry()
-                        .is_some_and(|g| (g.x, g.y, g.w, g.h) == (s.x, s.y, s.w, s.h))
-                    {
-                        break;
-                    }
-                }
-                restored = true;
-                last = current_geometry().map(|g| (g.x, g.y, g.w, g.h));
-                continue;
-            }
-            let now = (g.x, g.y, g.w, g.h);
-            if last != Some(now) {
-                last = Some(now);
-                let path = geometry_path();
-                let _ = fs::create_dir_all(path.parent().expect("has parent"));
-                let _ = fs::write(path, serde_json::to_vec(&g).expect("serializes"));
-            }
-        }
-    });
-}
-
-/// Plain multi-line text editor over one file.
-/// Set both Wayland selections. Terminals paste PRIMARY on Shift+Insert, which is
-/// what Omarchy's SUPER+V sends there. wl-copy also keeps the text after Scratchpad closes.
-fn copy(text: &str) {
-    use std::{io::Write, process::Stdio};
-    for flags in [&[][..], &["--primary"][..]] {
-        if let Ok(mut child) = Command::new("wl-copy")
-            .args(flags)
-            .stdin(Stdio::piped())
-            .spawn()
-        {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-        }
-    }
+/// Copy as markdown: bullets go out as "- ", not "• ".
+fn copy_markdown(text: &str, cx: &mut App) {
+    let md = swap_bullets(text, "• ", "- ");
+    cx.write_to_clipboard(ClipboardItem::new_string(md.clone()));
+    // Linux: wl-copy runs last, so it owns the selection and keeps it after exit.
+    platform::copy(&md);
 }
 
 /// Live markdown styling. Markers (`**`, `#`, ...) are dimmed on every line but the caret line.
@@ -271,6 +207,7 @@ fn markdown_decorations(
     (markers, styles)
 }
 
+/// Plain multi-line text editor over one file.
 struct Scratchpad {
     editor: Entity<EditorState>,
     /// Marker dimming (wins on overlap) and text styles.
@@ -283,16 +220,7 @@ struct Scratchpad {
 impl Scratchpad {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let text = fs::read_to_string(note_path()).unwrap_or_default();
-        let text = text
-            .split_inclusive('\n')
-            .map(|l| {
-                let body = l.trim_start();
-                match body.strip_prefix("- ") {
-                    Some(rest) => format!("{}• {rest}", &l[..l.len() - body.len()]),
-                    None => l.to_string(),
-                }
-            })
-            .collect::<String>();
+        let text = swap_bullets(&text, "- ", "• ");
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
                 .line_number(false)
@@ -335,6 +263,7 @@ impl Scratchpad {
             },
         )
         .detach();
+        platform::after_open(window, cx);
         Self {
             editor,
             decorations: None,
@@ -480,7 +409,7 @@ impl Render for Scratchpad {
             self.styled = key;
         }
         let mut bg: Hsla = rgb(BACKGROUND).into();
-        bg.a = OPACITY;
+        bg.a = platform::OPACITY;
         div()
             .id("root")
             .track_focus(&self.focus)
@@ -505,18 +434,26 @@ impl Render for Scratchpad {
             .capture_action(cx.listener(|this, _: &OutdentInline, window, cx| {
                 this.indent_bullet(true, window, cx)
             }))
-            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
-                let k = &e.keystroke;
-                let copying = k.modifiers.control && matches!(k.key.as_str(), "c" | "x" | "insert");
+            // Copy and cut as markdown. Stop here, so the editor does not copy the raw text.
+            .capture_action(cx.listener(|this, _: &Copy, _, cx| {
                 let selected = this.editor.read(cx).selected_value();
-                if copying && !selected.is_empty() {
-                    copy(&selected);
+                if !selected.is_empty() {
+                    copy_markdown(&selected, cx);
                 }
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &Cut, window, cx| {
+                let selected = this.editor.read(cx).selected_value();
+                if !selected.is_empty() {
+                    copy_markdown(&selected, cx);
+                    this.editor.update(cx, |e, cx| e.replace("", window, cx));
+                }
+                cx.stop_propagation();
             }))
             .capture_any_mouse_up(cx.listener(|this, e: &MouseUpEvent, _, cx| {
                 let selected = this.editor.read(cx).selected_value();
                 if e.button == MouseButton::Left && !selected.is_empty() {
-                    copy(&selected);
+                    copy_markdown(&selected, cx);
                 }
             }))
             .child(
@@ -531,35 +468,9 @@ impl Render for Scratchpad {
 
 fn main() {
     let saved = load_geometry();
-    track_geometry(saved);
     gpui_platform::application().run(move |cx| {
         gpui_component::init(cx);
-        // ALT as CTRL for word movement, deletion, select all and undo. ALT+C/V/X are Hyprland binds.
-        cx.bind_keys([
-            KeyBinding::new("alt-left", MoveToPreviousWord, Some("Input")),
-            KeyBinding::new("alt-right", MoveToNextWord, Some("Input")),
-            KeyBinding::new("alt-shift-left", SelectToPreviousWordStart, Some("Input")),
-            KeyBinding::new("alt-shift-right", SelectToNextWordEnd, Some("Input")),
-            KeyBinding::new("alt-backspace", DeleteToPreviousWordStart, Some("Input")),
-            KeyBinding::new("alt-delete", DeleteToNextWordEnd, Some("Input")),
-            KeyBinding::new("alt-home", MoveToStart, Some("Input")),
-            KeyBinding::new("alt-end", MoveToEnd, Some("Input")),
-            KeyBinding::new("alt-shift-up", SelectUp, Some("Input")),
-            KeyBinding::new("alt-shift-down", SelectDown, Some("Input")),
-            KeyBinding::new("alt-a", SelectAll, Some("Input")),
-            KeyBinding::new("alt-z", Undo, Some("Input")),
-            KeyBinding::new("alt-shift-z", Redo, Some("Input")),
-        ]);
-        // Omarchy's SUPER+C / SUPER+V send ctrl-insert / shift-insert.
-        cx.bind_keys([
-            KeyBinding::new("ctrl-insert", Copy, Some("Input")),
-            // SUPER is physically held while Omarchy injects the chord, so it can arrive merged.
-            KeyBinding::new("ctrl-super-c", Copy, Some("Input")),
-            KeyBinding::new("ctrl-super-v", Paste, Some("Input")),
-            KeyBinding::new("ctrl-super-x", Cut, Some("Input")),
-            KeyBinding::new("shift-insert", Paste, Some("Input")),
-            KeyBinding::new("shift-delete", Cut, Some("Input")),
-        ]);
+        platform::init(saved, cx);
         Theme::change(ThemeMode::Dark, None, cx);
         let theme = Theme::global_mut(cx);
         theme.foreground = rgb(FOREGROUND).into();
@@ -569,17 +480,7 @@ fn main() {
         theme.mono_font_family = FONT.into();
         theme.mono_font_size = px(FONT_SIZE);
         let (w, h) = saved.map_or((1000., 700.), |g| (g.w as f32, g.h as f32));
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(w), px(h)),
-                cx,
-            ))),
-            window_background: WindowBackgroundAppearance::Transparent,
-            titlebar: None,
-            app_id: Some(APP_ID.into()),
-            ..Default::default()
-        };
+        let options = platform::window_options(saved, size(px(w), px(h)), cx);
         cx.open_window(options, |window, cx| {
             let view = cx.new(|cx| Scratchpad::new(window, cx));
             let focus = view.read(cx).editor.read(cx).focus_handle(cx);
@@ -600,6 +501,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bullets_swap_both_ways() {
+        assert_eq!(
+            swap_bullets("- a\n  - b\nc - d", "- ", "• "),
+            "• a\n  • b\nc - d"
+        );
+        assert_eq!(
+            swap_bullets("• a\n  • b\nc •", "• ", "- "),
+            "- a\n  - b\nc •"
+        );
+    }
 
     #[test]
     fn shift_lines_whole_block() {
