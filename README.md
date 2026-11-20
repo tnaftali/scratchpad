@@ -17,12 +17,12 @@ Hit a hotkey, jot something down, hit it again. The window closes and the text i
 
 - **One note, always saved.** Every change is written to `~/Documents/scratchpad.md` as you type. Open it in any editor.
 - **Live markdown styling.** Headings, **bold**, *italic*, `~~strikethrough~~`, `` `code` `` and links are styled while you write. Markers (`#`, `~~`, backticks) are dimmed on every line except the one with the caret, so raw markdown shows only where you are editing.
-- **Lists that behave.** Typing `- ` turns into a `•` bullet. Enter continues the list (bullets and `1.` numbering), and Enter on an empty item ends it. Tab and Shift+Tab indent and outdent a bullet. Bullet and number markers are tinted with the accent color.
+- **Lists that behave.** Typing `- ` turns into a `•` bullet. Enter continues the list (bullets and `1.` numbering), and Enter on an empty item ends it. Tab and Shift+Tab indent and outdent a bullet, or every line of a selection. Bullet and number markers are tinted with the accent color.
 - **Copy on select.** Selecting text copies it, like a terminal. It stays available after the app closes. On Linux it goes to both Wayland clipboards (regular and primary), so it pastes in terminals with Shift+Insert.
 - **Copies markdown.** Copy, cut and copy on select turn `•` bullets back into `- `.
 - **Remembers its place.** Window size and position are saved and restored (on Linux through Hyprland and `hyprctl`).
 - **Toggle from anywhere (macOS).** Opt+V shows the window above other apps, and hides it again. Cmd+W hides it; the app keeps running.
-- **Translucent, dark.** Claude-black background with an orange accent, in IBM Plex Sans.
+- **Translucent, dark.** Claude-black background with a blue accent, in IBM Plex Sans.
 
 ## Build
 
