@@ -25,7 +25,7 @@ const FONT: &str = "IBM Plex Sans";
 /// Claude black.
 const BACKGROUND: u32 = 0x262624;
 const FOREGROUND: u32 = 0xf5f4ed;
-const ACCENT: u32 = 0xd97757;
+const ACCENT: u32 = 0x7aa2ff;
 const FONT_SIZE: f32 = 17.;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
